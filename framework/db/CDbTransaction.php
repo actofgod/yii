@@ -52,6 +52,16 @@ class CDbTransaction extends CComponent
 		$this->_active=true;
 	}
 
+	public function __destruct()
+	{
+		if ($this->_active) {
+			if ($this->_connection->getTransactionAutocommit())
+				$this->commit();
+			else
+				$this->rollback();
+		}
+	}
+
 	/**
 	 * Commits a transaction.
 	 * @throws CException if the transaction or the DB connection is not active.
@@ -61,8 +71,12 @@ class CDbTransaction extends CComponent
 		if($this->_active && $this->_connection->getActive())
 		{
 			Yii::trace('Committing transaction','system.db.CDbTransaction');
-			$this->_connection->getPdoInstance()->commit();
-			$this->_active=false;
+			if ($this->beforeCommit()) {
+				$this->_connection->getPdoInstance()->commit();
+				$this->_active=false;
+				if ($this->hasEventHandler('onAfterCommit'))
+					$this->onAfterCommit(new CDbTransactionEvent($this->_connection, $this));
+			}
 		}
 		else
 			throw new CDbException(Yii::t('yii','CDbTransaction is inactive and cannot perform commit or roll back operations.'));
@@ -77,8 +91,12 @@ class CDbTransaction extends CComponent
 		if($this->_active && $this->_connection->getActive())
 		{
 			Yii::trace('Rolling back transaction','system.db.CDbTransaction');
-			$this->_connection->getPdoInstance()->rollBack();
-			$this->_active=false;
+			if ($this->beforeRollback()) {
+				$this->_connection->getPdoInstance()->rollBack();
+				$this->_active=false;
+				if ($this->hasEventHandler('onAfterRollback'))
+					$this->onAfterRollback(new CDbTransactionEvent($this->_connection, $this));
+			}
 		}
 		else
 			throw new CDbException(Yii::t('yii','CDbTransaction is inactive and cannot perform commit or roll back operations.'));
@@ -106,5 +124,47 @@ class CDbTransaction extends CComponent
 	protected function setActive($value)
 	{
 		$this->_active=$value;
+	}
+
+	protected function beforeCommit()
+	{
+		if ($this->hasEventHandler('onBeforeCommit')) {
+			$event = new CDbTransactionEvent();
+			$this->onBeforeCommit($event);
+			return $event->isValid;
+		}
+		else
+			return true;
+	}
+
+	public function onBeforeCommit(CDbTransactionEvent $event)
+	{
+		$this->raiseEvent('onBeforeCommit', $event);
+	}
+
+	public function beforeRollback()
+	{
+		if ($this->hasEventHandler('onBeforeCommit')) {
+			$event = new CDbTransactionEvent();
+			$this->onBeforeRollback($event);
+			return $event->isValid;
+		}
+		else
+			return true;
+	}
+
+	public function onBeforeRollback(CDbTransactionEvent $event)
+	{
+		$this->raiseEvent('onBeforeRollback', $event);
+	}
+
+	public function onAfterCommit(CDbTransactionEvent $event)
+	{
+		$this->raiseEvent('onAfterCommit', $event);
+	}
+
+	public function onAfterRollback(CDbTransactionEvent $event)
+	{
+		$this->raiseEvent('onAfterRollback', $event);
 	}
 }

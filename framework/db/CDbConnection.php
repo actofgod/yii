@@ -98,6 +98,7 @@
  * @property array $attributes Attributes (name=>value) that are previously explicitly set for the DB connection.
  * @property array $stats The first element indicates the number of SQL statements executed,
  * and the second element the total time spent in SQL execution.
+ * @property boolean $transactionAutocommit uncomplete transaction autocommit status
  *
  * @author Qiang Xue <qiang.xue@gmail.com>
  * @package system.db
@@ -253,9 +254,17 @@ class CDbConnection extends CApplicationComponent
 	private $_attributes=array();
 	private $_active=false;
 	private $_pdo;
+
+	/**
+	 * @var CDbTransaction Current transaction instance
+	 */
 	private $_transaction;
 	private $_schema;
 
+	/**
+	 * @var boolean True to commit or false to rollback uncomplete transaction before this connection will be close
+	 */
+	private $_transactionAutocommit = false;
 
 	/**
 	 * Constructor.
@@ -272,6 +281,14 @@ class CDbConnection extends CApplicationComponent
 		$this->connectionString=$dsn;
 		$this->username=$username;
 		$this->password=$password;
+	}
+
+	/**
+	 * Close the connection when destroying.
+	 */
+	public function __destructor()
+	{
+		$this->close();
 	}
 
 	/**
@@ -398,6 +415,13 @@ class CDbConnection extends CApplicationComponent
 	protected function close()
 	{
 		Yii::trace('Closing DB connection','system.db.CDbConnection');
+		if ($this->_transaction !== null && $this->_transaction->getActive())
+		{
+			if ($this->_transactionAutocommit)
+				$this->_transaction->commit();
+			else
+				$this->_transaction->rollback();
+		}
 		$this->_pdo=null;
 		$this->_active=false;
 		$this->_schema=null;
@@ -502,9 +526,14 @@ class CDbConnection extends CApplicationComponent
 	public function beginTransaction()
 	{
 		Yii::trace('Starting transaction','system.db.CDbConnection');
-		$this->setActive(true);
-		$this->_pdo->beginTransaction();
-		return $this->_transaction=new CDbTransaction($this);
+		if ($this->beforeBeginTransaction($this->getCurrentTransaction())) {
+			$this->setActive(true);
+			$this->_pdo->beginTransaction();
+			$this->_transaction = new CDbTransaction($this);
+			if ($this->hasEventHandler('onAfterBeginTransaction'))
+				$this->onAfterBeginTransaction(new CDbTransactionEvent($this, $this->_transaction));
+		}
+		return $this->_transaction;
 	}
 
 	/**
@@ -820,4 +849,73 @@ class CDbConnection extends CApplicationComponent
 		$time+=array_sum($timings);
 		return array($count,$time);
 	}
+
+	/**
+	 * Sets uncomplete transaction autocommit status.
+	 * @param boolean $value True, if commit needed, false for rollback.
+	 */
+	public function setTransactionAutocommit($value)
+	{
+		$this->_transactionAutocommit = $value ? true : false;
+	}
+
+	/**
+	 * Returns current transaction autocommit flag value.
+	 * @return boolean True if uncomplete transaction will commit, false if it will rollback
+	 */
+	public function getTransactionAutocommit()
+	{
+		return $this->_transactionAutocommit;
+	}
+
+	/**
+	 * Check allow to begin transaction
+	 * @param CDbTransaction|NULL $currentTransaction Current transaction instance or null, if transaction did not
+	 * started
+	 * @return boolean True if transaction will be started, false if not
+	 */
+	protected function beforeBeginTransaction($currentTransaction)
+	{
+		if ($this->hasEventHandler('onBeforeBeginTransaction')) {
+			$event = new CDbTransactionEvent($this, $currentTransaction);
+			$this->onBeforeBeginTransaction($event);
+			return $event->isValid;
+		}
+		else
+			return true;
+	}
+
+	/**
+	 * Raised right BEFORE the transaction begun.
+	 * @param CDbTransactionEvent $event The event parameter
+	 */
+	public function onBeforeBeginTransaction(CDbTransactionEvent $event)
+	{
+		$this->raiseEvent('onBeforeBeginTransaction', $event);
+	}
+
+	/**
+	 * Raised right AFTER the transaction begun.
+	 * @param CDbTransactionEvent $event Event to rise
+	 */
+	public function onAfterBeginTransaction(CDbTransactionEvent $event)
+	{
+		$this->raiseEvent('onAfterBeginTransaction', $event);
+	}
+}
+
+class CDbTransactionEvent extends CEvent
+{
+	/**
+	 * @return CDbTransaction
+	 */
+	public function getTransaction()
+	{
+		return $this->params;
+	}
+
+	/**
+	 * @var boolean
+	 */
+	public $isValid = true;
 }
