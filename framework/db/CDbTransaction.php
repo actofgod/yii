@@ -54,7 +54,7 @@ class CDbTransaction extends CComponent
 
 	public function __destruct()
 	{
-		if ($this->_active) {
+		if ($this->_active && $this->_connection->getActive()) {
 			if ($this->_connection->getTransactionAutocommit())
 				$this->commit();
 			else
@@ -129,7 +129,7 @@ class CDbTransaction extends CComponent
 	protected function beforeCommit()
 	{
 		if ($this->hasEventHandler('onBeforeCommit')) {
-			$event = new CDbTransactionEvent();
+			$event = new CDbTransactionEvent($this->_connection, $this);
 			$this->onBeforeCommit($event);
 			return $event->isValid;
 		}
@@ -144,8 +144,8 @@ class CDbTransaction extends CComponent
 
 	public function beforeRollback()
 	{
-		if ($this->hasEventHandler('onBeforeCommit')) {
-			$event = new CDbTransactionEvent();
+		if ($this->hasEventHandler('onBeforeRollback')) {
+			$event = new CDbTransactionEvent($this->_connection, $this);
 			$this->onBeforeRollback($event);
 			return $event->isValid;
 		}

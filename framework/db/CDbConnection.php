@@ -876,6 +876,7 @@ class CDbConnection extends CApplicationComponent
 	 */
 	protected function beforeBeginTransaction($currentTransaction)
 	{
+		$this->_transaction = null;
 		if ($this->hasEventHandler('onBeforeBeginTransaction')) {
 			$event = new CDbTransactionEvent($this, $currentTransaction);
 			$this->onBeforeBeginTransaction($event);

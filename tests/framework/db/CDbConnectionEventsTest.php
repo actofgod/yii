@@ -7,6 +7,8 @@ class CDbConnectionEventsTest extends CTestCase
 	 * @var CDbConnection
 	 */
 	private $_db;
+	private $_beginCounter;
+	private $_lastTransaction;
 
 	public function setUp()
 	{
@@ -24,7 +26,12 @@ class CDbConnectionEventsTest extends CTestCase
 			$schemaFile = realpath(dirname(__FILE__).'/data/postgres.sql');
 			$this->markTestSkipped("Please read $schemaFile for details on setting up the test environment for PostgreSQL test case.");
 		}
+		$this->_beginCounter = 0;
+		$this->_lastTransaction = null;
+	}
 
+	private function _setupData()
+	{
 		try	{ $this->_db->createCommand('DROP SCHEMA test CASCADE')->execute(); } catch(Exception $e) { }
 		try	{ $this->_db->createCommand('DROP TABLE yii_types CASCADE')->execute(); } catch(Exception $e) { }
 
@@ -43,6 +50,8 @@ class CDbConnectionEventsTest extends CTestCase
 
 	public function testTransactionAutocommit()
 	{
+		$this->_setupData();
+
 		$this->assertFalse($this->_db->transactionAutocommit);
 		$this->_db->transactionAutocommit = true;
 		$this->assertTrue($this->_db->transactionAutocommit);
@@ -94,6 +103,81 @@ class CDbConnectionEventsTest extends CTestCase
 		$selectStatement->bindValue(':id', 102, \PDO::PARAM_INT);
 		$this->assertEquals((int)$selectStatement->queryScalar(), 1);
 	}
-}
 
- 
+	public function testOnBeforeBeginTransactionEventRaising()
+	{
+		$this->_db->attachEventHandler('onBeforeBeginTransaction', array($this, 'onBeginEventListenerTrue'));
+
+		$transaction = $this->_db->beginTransaction();
+		$this->assertEquals($this->_beginCounter, 1);
+		$this->assertNotNull($transaction);
+		$this->assertNull($this->_lastTransaction);
+		$transaction->rollback();
+
+		$transaction = $this->_db->beginTransaction();
+		$this->assertEquals($this->_beginCounter, 2);
+		$this->assertNotNull($transaction);
+		$this->assertNull($this->_lastTransaction);
+		$transaction->rollback();
+	}
+
+	public function testOnBeforeBeginTransactionFalseEventRaising()
+	{
+		$this->_db->attachEventHandler('onBeforeBeginTransaction', array($this, 'onBeginEventListenerTrue'));
+
+		$transaction = $this->_db->beginTransaction();
+		$this->assertEquals($this->_beginCounter, 1);
+		$this->assertNotNull($transaction);
+		$this->assertNull($this->_lastTransaction);
+
+		$this->_db->detachEventHandler('onBeforeBeginTransaction', array($this, 'onBeginEventListenerTrue'));
+		$this->_db->attachEventHandler('onBeforeBeginTransaction', array($this, 'onBeginEventListenerFalse'));
+
+		$invalid = $this->_db->beginTransaction();
+		$this->assertEquals($this->_beginCounter, 2);
+		$this->assertNull($invalid);
+		$this->assertNotNull($this->_lastTransaction);
+		$this->assertSame($transaction, $this->_lastTransaction);
+
+		$invalid = $this->_db->beginTransaction();
+		$this->assertEquals($this->_beginCounter, 3);
+		$this->assertNull($invalid);
+		$this->assertNull($this->_lastTransaction);
+	}
+
+	public function testOnAfterBeginTransactionEventRaising()
+	{
+		$this->_db->attachEventHandler('onAfterBeginTransaction', array($this, 'onAfterEventListener'));
+
+		$transaction = $this->_db->beginTransaction();
+		$this->assertEquals($this->_beginCounter, 1);
+		$this->assertNotNull($transaction);
+		$this->assertEquals($this->_lastTransaction, $transaction);
+		$transaction->rollback();
+
+		$transaction = $this->_db->beginTransaction();
+		$this->assertEquals($this->_beginCounter, 2);
+		$this->assertNotNull($transaction);
+		$this->assertEquals($this->_lastTransaction, $transaction);
+		$transaction->rollback();
+	}
+
+	public function onBeginEventListenerTrue(CDbTransactionEvent $event)
+	{
+		$this->_beginCounter++;
+		$this->_lastTransaction = $event->getTransaction();
+	}
+
+	public function onBeginEventListenerFalse(CDbTransactionEvent $event)
+	{
+		$this->_lastTransaction = $event->getTransaction();
+		$this->_beginCounter++;
+		$event->isValid = false;
+	}
+
+	public function onAfterEventListener(CDbTransactionEvent $event)
+	{
+		$this->_lastTransaction = $event->getTransaction();
+		$this->_beginCounter++;
+	}
+}
